@@ -8,9 +8,6 @@ services:
     restart: always
     stdin_open: true
     tty: true
-    networks:
-      - default
-      - board-net
     volumes:
       - .config.json:/var/www/html/.config.json
       - ./docker/apache/boards.conf:/etc/apache2/sites-available/boards.conf
