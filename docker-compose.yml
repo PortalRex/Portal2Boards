@@ -18,6 +18,3 @@ services:
       - ./docker/volumes/cache:/var/www/html/cache:rw
       - ./docker/volumes/demos:/var/www/html/demos:rw
       - ./docker/volumes/sessions:/var/www/html/sessions:rw
-networks:
-    board-net:
-      name: board-net
