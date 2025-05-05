@@ -9,8 +9,8 @@ services:
     stdin_open: true
     tty: true
     networks:
-       - default
-       - board-net
+      - default
+      - board-net
     volumes:
       - .config.json:/var/www/html/.config.json
       - ./docker/apache/boards.conf:/etc/apache2/sites-available/boards.conf
@@ -22,5 +22,5 @@ services:
       - ./docker/volumes/demos:/var/www/html/demos:rw
       - ./docker/volumes/sessions:/var/www/html/sessions:rw
 networks:
-     board-net:
-       name: board-net
+    board-net:
+      name: board-net
