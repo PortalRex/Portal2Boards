@@ -522,25 +522,57 @@ class Router {
         }
 
         if ($location[1] == "verifyScore") {
-            if (isset($_POST["id"])) {
-                if (!is_numeric($_POST["id"])) {
-                    exit;
-                }
+            header("Content-Type: application/json");
 
-                if (SteamSignIn::loggedInUserIsAdmin()) {
-                    Database::query(
-                        "UPDATE changelog
-                         SET pending = 0
-                         WHERE changelog.id = ?",
-                        "i",
-                        [
-                            intval($_POST['id']),
-                        ]
-                    );
-                }
-            } else {
-                echo "Missing post data!";
+            if (!isset($_POST["id"])) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "Missing post data!"]);
+                exit;
             }
+
+            if (!is_numeric($_POST["id"])) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "Invalid id"]);
+                exit;
+            }
+
+            if (!SteamSignIn::loggedInUserIsAdmin()) {
+                http_response_code(403);
+                echo json_encode(["status" => "error", "message" => "Unauthorized"]);
+                exit;
+            }
+
+            $changeId = intval($_POST['id']);
+            $change = Leaderboard::getChange($changeId);
+            if (!$change) {
+                http_response_code(404);
+                echo json_encode(["status" => "error", "message" => "Change not found"]);
+                exit;
+            }
+
+            Database::query(
+                "UPDATE changelog
+                 SET pending = 0
+                 WHERE changelog.id = ?",
+                "i",
+                [
+                    $changeId,
+                ]
+            );
+
+            Leaderboard::resolveScore(
+                strval($change['profile_number']),
+                strval($change['mapid'])
+            );
+
+            Leaderboard::cacheLeaderboard();
+
+            $updatedChange = Leaderboard::getChange($changeId);
+
+            echo json_encode([
+                "status" => "ok",
+                "change" => $updatedChange,
+            ]);
             exit;
         }
 
