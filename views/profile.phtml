@@ -3,6 +3,7 @@
 <?php $activityDayRange = 60 ?>
 <?php $userActivity = $user->getChangelog($activityDayRange)?>
 <?php include("util/ProfileView.php")?>
+<?php $profileFrozen = isset($user->userData->profile_frozen) && intval($user->userData->profile_frozen) === 1; ?>
 
 <script>
     $("body").css("min-width", "1365px");
@@ -75,6 +76,15 @@
                                     Ban 
                                 <?php endif; ?>
                             </div>
+                            <div class="freezeToggleButton profileBannerButton">
+                                <?php if ($profileFrozen): ?>
+                                    <i class="fa fa-fw fa-play" aria-hidden="true"></i>
+                                    Unfreeze
+                                <?php else: ?>
+                                    <i class="fa fa-fw fa-pause" aria-hidden="true"></i>
+                                    Freeze
+                                <?php endif; ?>
+                            </div>
                         </div>
                     <?php endif; ?> 
                     <img src="<?php echo $avatar; ?>" alt=""/>
@@ -129,6 +139,13 @@
                  </span>
             </div>
         <?php else: ?>
+        <?php if ($profileFrozen): ?>
+            <div class="noactivity" style="float: none;">
+                 <span class="noact-wrap">
+                      <span>This profile is frozen. New submissions are disabled until it is unfrozen.</span>
+                 </span>
+            </div>
+        <?php endif; ?>
         <div class="profile-title"><span>GLOBAL STATISTICS</span></div>
         <div class="global-stats">
             <div class="block-container wr">
@@ -715,6 +732,33 @@
     <?php endif; ?>
 
     <?php if (!SteamSignIn::isLoggedIn($user->profileNumber) && SteamSignIn::loggedInUserIsAdmin()): ?>
+        var changingFrozenState = false;
+        $(".freezeToggleButton").click(function() {
+            if (!changingFrozenState) {
+                changingFrozenState = true;
+
+                $refreshIcon = $(".freezeToggleButton i");
+                $refreshIcon.removeClass("fa-play");
+                $refreshIcon.removeClass("fa-pause");
+                $refreshIcon.addClass("fa-refresh");
+                $refreshIcon.addClass("fa-spin");
+
+                $.ajax({
+                    url: '/setProfileFreezeStatus',
+                    type: 'POST',
+                    data: {profileNumber: '<?=$user->profileNumber?>', freezeStatus: <?=$profileFrozen ? 0 : 1?> },
+                    success: function (data) {
+                        console.log(data);
+                        document.location.href = "/profile/<?=$user->profileNumber?>";
+                    },
+                    error: function(e) {
+                        console.log(e.message);
+                    },
+                    cache: false
+                });
+            }
+        });
+
         var changingBannedState = false;
         $(".banToggleButton").click(function() {
             if (!changingBannedState) {

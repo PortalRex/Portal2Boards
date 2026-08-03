@@ -168,6 +168,19 @@ class Router {
                     exit;
                 }
 
+                if (Leaderboard::isProfileFrozen($userId)) {
+                    Leaderboard::recordFrozenScore($userId, strval($_POST["mapId"]), intval($_POST["score"]));
+                    echo "Profile is frozen";
+                    http_response_code(403);
+                    exit;
+                }
+
+                if (Leaderboard::isFrozenIgnoredScore($userId, strval($_POST["mapId"]), intval($_POST["score"]))) {
+                    echo "Score was recorded while profile was frozen";
+                    http_response_code(403);
+                    exit;
+                }
+
                 $id = Leaderboard::submitChange(
                     $userId,
                     strval($_POST["mapId"]),
@@ -474,6 +487,19 @@ class Router {
                     exit;
                 }
 
+                if (Leaderboard::isProfileFrozen(strval($_POST["profileNumber"]))) {
+                    Leaderboard::recordFrozenScore(strval($_POST["profileNumber"]), strval($_POST["chamber"]), intval($_POST["score"]));
+                    http_response_code(403);
+                    echo "Profile is frozen";
+                    exit;
+                }
+
+                if (Leaderboard::isFrozenIgnoredScore(strval($_POST["profileNumber"]), strval($_POST["chamber"]), intval($_POST["score"]))) {
+                    http_response_code(403);
+                    echo "Score was recorded while profile was frozen";
+                    exit;
+                }
+
                 if (SteamSignIn::hasProfilePrivileges($_POST["profileNumber"])) {
                     $id = Leaderboard::submitChange(
                         strval($_POST["profileNumber"]),
@@ -634,6 +660,28 @@ class Router {
             exit;
         }
 
+        if ($location[1] == "setProfileFreezeStatus") {
+            if (isset($_POST["profileNumber"]) && isset($_POST["freezeStatus"])) {
+
+                if (!SteamSignIn::loggedInUserIsAdmin()) {
+                    exit;
+                }
+
+                if (!is_numeric($_POST["profileNumber"]) || !is_numeric($_POST["freezeStatus"])) {
+                    exit;
+                }
+
+                if (SteamSignIn::isLoggedIn($_POST["profileNumber"])) {
+                    exit;
+                }
+
+                Leaderboard::setProfileFreezeStatus(strval($_POST["profileNumber"]), intval($_POST["freezeStatus"]));
+            } else {
+                echo "Missing post data!";
+            }
+            exit;
+        }
+
         //page request handling
         if ($location[1] == "") {
             $this->routeToDefault();
@@ -771,6 +819,7 @@ class Router {
                 exit;
             }
 
+            Leaderboard::ensureProfileFreezeSchema();
             $view->profile = new User($location[2]);
             $view->profile->getProfileData();
             View::$pageData["pageTitle"] = (isset($view->profile->userData->displayName)) ? $view->profile->userData->displayName : "No profile";

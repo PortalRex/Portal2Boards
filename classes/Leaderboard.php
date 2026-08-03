@@ -6,6 +6,8 @@ class Leaderboard
     const rankForPoints = 200;
     const proofBonusPointsPercentage = 0;
 
+    private static $profileFreezeSchemaEnsured = false;
+
 
     public static function fetchNewData(string $chamber = "")
     {
@@ -324,6 +326,7 @@ class Leaderboard
         $highestEvidenceRank = !empty($evidenceRequirements) ? max(array_column($evidenceRequirements, 'rank')) : false;
 
         Debug::log("Saving new leaderboard data");
+        self::ensureProfileFreezeSchema();
 
         $db_data = Database::unsafe_raw(
             "SELECT id
@@ -342,11 +345,19 @@ class Leaderboard
         $users = User::getAllUserData();
         Debug::log("Obtained all current users");
 
+        $frozenProfiles = self::getFrozenProfiles();
+
         $userInsertions = array();
         $scoreUpdates = array();
         $scoreInsertions = array();
         foreach ($newScores as $chamber => $chamber_val) {
             foreach ($chamber_val as $player => $score) {
+                if (isset($frozenProfiles[$player])) {
+                    Debug::log("Frozen profile score ignored. Player: ".$player." Map: ".$chamber." Score: ".$score);
+                    self::recordFrozenScore(strval($player), strval($chamber), intval($score));
+                    continue;
+                }
+
                 if (!isset($users[$player]) && !isset($userInsertions[$player])) {
                     $userInsertions[$player] = true;
                 }
@@ -357,6 +368,11 @@ class Leaderboard
                 $freshMapScore = !isset($oldChangelog[$chamber][$player]);
                 $newChange = !isset($oldChangelog[$chamber][$player][$score]);
                 $improvement = isset($oldBoards[$chapter][$chamber][$player]) ? $score < $oldBoards[$chapter][$chamber][$player]["scoreData"]["score"] : true;
+
+                if (self::isFrozenIgnoredScore(strval($player), strval($chamber), intval($score))) {
+                    Debug::log("Previously frozen score ignored. Player: ".$player." Map: ".$chamber." Score: ".$score);
+                    continue;
+                }
 
                 if ($freshMapScore) {
                     Debug::log("Fresh map score found. Player: ".$player." Map: ".$chamber." Score: ".$score);
@@ -1384,6 +1400,176 @@ class Leaderboard
         }
     }
 
+    public static function ensureProfileFreezeSchema()
+    {
+        if (self::$profileFreezeSchemaEnsured) {
+            return;
+        }
+
+        try {
+            Database::unsafe_raw("ALTER TABLE usersnew ADD COLUMN profile_frozen TINYINT(1) NOT NULL DEFAULT 0");
+        } catch (\Throwable $th) {
+            if (strpos($th->getMessage(), "Duplicate column") === false) {
+                throw $th;
+            }
+        }
+
+        try {
+            Database::unsafe_raw("ALTER TABLE usersnew ADD COLUMN profile_frozen_at DATETIME NULL");
+        } catch (\Throwable $th) {
+            if (strpos($th->getMessage(), "Duplicate column") === false) {
+                throw $th;
+            }
+        }
+
+        try {
+            Database::unsafe_raw("ALTER TABLE usersnew ADD COLUMN profile_unfrozen_at DATETIME NULL");
+        } catch (\Throwable $th) {
+            if (strpos($th->getMessage(), "Duplicate column") === false) {
+                throw $th;
+            }
+        }
+
+        Database::unsafe_raw(
+            "CREATE TABLE IF NOT EXISTS profile_frozen_scores (
+                profile_number VARCHAR(32) NOT NULL,
+                map_id VARCHAR(16) NOT NULL,
+                score INT NOT NULL,
+                freeze_started_at DATETIME NULL,
+                freeze_ended_at DATETIME NULL,
+                ignored_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (profile_number, map_id, score)
+             )"
+        );
+
+        self::$profileFreezeSchemaEnsured = true;
+    }
+
+    private static function getFrozenProfiles(): array
+    {
+        self::ensureProfileFreezeSchema();
+
+        $rows = Database::unsafe_raw(
+            "SELECT profile_number
+             FROM usersnew
+             WHERE profile_frozen = 1"
+        );
+
+        $profiles = array();
+        while ($row = $rows->fetch_assoc()) {
+            $profiles[$row["profile_number"]] = true;
+        }
+
+        return $profiles;
+    }
+
+    public static function isProfileFrozen(string $profileNumber): bool
+    {
+        self::ensureProfileFreezeSchema();
+
+        $row = Database::findOne(
+            "SELECT profile_frozen
+             FROM usersnew
+             WHERE profile_number = ?",
+            "s",
+            [
+                $profileNumber,
+            ]
+        );
+
+        return $row != null && intval($row["profile_frozen"]) === 1;
+    }
+
+    public static function setProfileFreezeStatus(string $profileNumber, int $frozen)
+    {
+        self::ensureProfileFreezeSchema();
+
+        if ($frozen === 1) {
+            Database::query(
+                "UPDATE usersnew
+                 SET profile_frozen = 1
+                   , profile_frozen_at = CURRENT_TIMESTAMP
+                   , profile_unfrozen_at = NULL
+                 WHERE profile_number = ?",
+                "s",
+                [
+                    $profileNumber,
+                ]
+            );
+        } else {
+            Database::query(
+                "UPDATE usersnew
+                 SET profile_frozen = 0
+                   , profile_unfrozen_at = CURRENT_TIMESTAMP
+                 WHERE profile_number = ?",
+                "s",
+                [
+                    $profileNumber,
+                ]
+            );
+
+            Database::query(
+                "UPDATE profile_frozen_scores
+                 SET freeze_ended_at = CURRENT_TIMESTAMP
+                 WHERE profile_number = ?
+                   AND freeze_ended_at IS NULL",
+                "s",
+                [
+                    $profileNumber,
+                ]
+            );
+        }
+    }
+
+    public static function recordFrozenScore(string $profileNumber, string $mapId, int $score)
+    {
+        self::ensureProfileFreezeSchema();
+
+        Database::query(
+            "INSERT INTO profile_frozen_scores (
+                profile_number
+              , map_id
+              , score
+              , freeze_started_at
+             )
+             SELECT ?
+                  , ?
+                  , ?
+                  , profile_frozen_at
+             FROM usersnew
+             WHERE profile_number = ?
+             ON DUPLICATE KEY UPDATE ignored_at = CURRENT_TIMESTAMP",
+            "ssis",
+            [
+                $profileNumber,
+                $mapId,
+                $score,
+                $profileNumber,
+            ]
+        );
+    }
+
+    public static function isFrozenIgnoredScore(string $profileNumber, string $mapId, int $score): bool
+    {
+        self::ensureProfileFreezeSchema();
+
+        $row = Database::findOne(
+            "SELECT profile_number
+             FROM profile_frozen_scores
+             WHERE profile_number = ?
+               AND map_id = ?
+               AND score = ?
+             LIMIT 1",
+            "ssi",
+            [
+                $profileNumber,
+                $mapId,
+                $score,
+            ]
+        );
+
+        return $row != null;
+    }
     public static function setScoreBanStatus(int $changelogId, int $banned)
     {
         Database::query(
@@ -1540,6 +1726,14 @@ class Leaderboard
         bool $auto)
     {
         Debug::log("Starting Submit Change");
+
+        if (self::isProfileFrozen($profileNumber)) {
+            throw new \Exception("Profile is frozen.");
+        }
+
+        if (self::isFrozenIgnoredScore($profileNumber, $chamber, $score)) {
+            throw new \Exception("This score was recorded while the profile was frozen.");
+        }
         $maps = Cache::get("maps");
         $chapter = $maps["maps"][$chamber]["chapterId"];
 
